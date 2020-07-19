@@ -15,6 +15,7 @@ The editor chosen by default is ``nano``, but you should choose one available on
 Some screenshots:
 
 ![Nano](images/Nano.png)
+
 ![PassiveListening](image/Passive.png)
 
 ### Security Considerations
