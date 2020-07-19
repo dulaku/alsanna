@@ -16,7 +16,7 @@ Some screenshots:
 
 ![Nano](images/Nano.png)
 
-![PassiveListening](image/Passive.png)
+![PassiveListening](images/Passive.png)
 
 ### Security Considerations
 ``alsanna`` uses an unspeakably lazy trick for editing TCP messages. Because it just drops them in a temporary file and then opens them in a text editor, this code is almost certainly vulnerable to race conditions. Since the contents of that file are later deserialized into a bytestring, those race conditions can possibly lead to remote code execution if someone can write to the files. And because ``alsanna`` probably has to run as ``root`` to bind well-known ports, that would be pretty bad. Exploitation and mitigation are both left as exercises to the reader.
