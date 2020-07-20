@@ -10,6 +10,8 @@ Like its namesake, it is:
 
 ``alsanna`` only supports Python 3, but has no Python dependencies outside the standard library. Arguments are documented with ``argparse``, so you can get a full list by reading the top of the file or by running ``python alsanna.py -h``. I could copy and reformat them here, but I'm not going to.
 
+``alsanna`` assumes "invisible" proxying - that is, it assumes the software it's proxying doesn't know it's being proxied. So you're responsible for configuring that software to send its traffic to the port you set ``alsanna`` to listen to, which you can often do by listening on the port the software expects and configuring your ``hosts`` file to point traffic for the hostnames the software uses to yourself instead of using DNS. You're also responsible for telling ``alsanna`` where to send traffic it receives.
+
 The editor chosen by default is ``nano``, but you should choose one available on your system. The default configuration expects a certificate and private key, both in ``.pem`` format, at ``./tls_cert.pem`` and ``./tls_key.pem`` respectively. If you already have a TLS-intercepting proxy for HTTPS, an easy way to get these would be to export the certificate and key you're already using and convert them to ``.pem`` format.
 
 Some screenshots:
@@ -24,6 +26,8 @@ Some screenshots:
 ``alsanna`` does absolutely no certificate verification. This makes testing easier, but it means you should trust your DNS servers and such.
 
 ### Future Work
-I'd like to add support for generating leaf certificates on the fly. Currently, this only works if the software whose traffic you're intercepting refuses to validate the certificate, or if you generate a certificate with a hostname matching the expected server, which is kind of a hassle.
+I'd like to add support for generating leaf certificates on the fly. Currently, this only works if the software whose traffic you're intercepting refuses to validate the certificate, or if you generate a certificate with a hostname matching the expected server, which is kind of a hassle. This would also go well with support for DNS lookups so you don't need to supply a raw IP address if you don't want to.
 
 I'd also like to add support for mTLS. This version only handles impersonating the server.
+
+I tried to build in toggle keys for intercepting client and server messages separately, but couldn't get anything to work without breaking the editor. Revisiting this in the future would be a good idea.
