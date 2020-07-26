@@ -3,8 +3,6 @@ import socket, select, ssl                      # Networking
 import multiprocessing                          # Multiprocessing
 import traceback, sys, os, tempfile, ast, time  # Misc
 
-#TODO: Add a hostname flag and use it to sign certs following https://gist.github.com/toolness/3073310
-
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument(
     "--use_tls", type=bool, default=True,
@@ -77,13 +75,13 @@ def process_messages(preprocessing_q):
     postprocessing_queues = {}
     while True:
         connection_id, message = preprocessing_q.get()
-        if connection_id not in postprocessing_queues.keys():  # Register new queue
-            postprocessing_queues[connection_id] = message  # "message# is Queue object
-            continue
         if connection_id == "Kill":
             while not postprocessing_queues[message].empty():
                 postprocessing_queues[message].get()  # Discard bytes still in queue
             del postprocessing_queues[message]
+            continue
+        if connection_id not in postprocessing_queues.keys():  # Register new queue
+            postprocessing_queues[connection_id] = message  # "message# is Queue object
             continue
         print(message)  # Print unmodified message
         end_of_colorcode = message.index('m')
@@ -143,7 +141,7 @@ def handle_connections(listen_sock, preprocessing_q, connection_id):
     """
     q_manager = multiprocessing.Manager()
     postprocessing_q = q_manager.Queue()
-    preprocessing_queue.put((connection_id, postprocessing_q))
+    preprocessing_q.put((connection_id, postprocessing_q))
     if args.use_tls:
         listen_tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         listen_tls_context.load_cert_chain(args.cert, args.priv_key)
