@@ -45,6 +45,10 @@ arg_parser.add_argument(
     help="8-bit color code for server-sent text."
 )
 arg_parser.add_argument(
+    "--error_color", type=int, default=31,
+    help="8-bit color code for error messages from alsanna."
+)
+arg_parser.add_argument(
     "--editor", type=str, default="nano",
     help="Command to use for launching editor."
 )
@@ -75,6 +79,9 @@ def process_messages(preprocessing_q):
     postprocessing_queues = {}
     while True:
         connection_id, message = preprocessing_q.get()
+        if connection_id == "Err":
+            print(message, file=sys.stderr)
+            continue
         if connection_id == "Kill":
             while not postprocessing_queues[message].empty():
                 postprocessing_queues[message].get()  # Discard bytes still in queue
@@ -83,29 +90,35 @@ def process_messages(preprocessing_q):
         if connection_id not in postprocessing_queues.keys():  # Register new queue
             postprocessing_queues[connection_id] = message  # "message# is Queue object
             continue
+
         print(message)  # Print unmodified message
         end_of_colorcode = message.index('m')
         color = int(message[7:end_of_colorcode])
         start_of_bytes = message.index('b')
-        message = message[start_of_bytes:-4]  # Trim color codes
-        if (color == args.client_color and args.intercept_client) \
-                or (color == args.server_color and args.intercept_server):
-            with tempfile.NamedTemporaryFile(mode="w+") as tmpfile:
-                tmpfile.write(message)
-                tmpfile.flush()
-                time.sleep(args.edit_delay)
-                os.system(args.editor + " " + tmpfile.name)
-                tmpfile.seek(0)
-                message = ast.literal_eval(tmpfile.read())
-        else:
-            message = ast.literal_eval(message)
-        postprocessing_queues[connection_id].put(message)
+        raw_message = message[start_of_bytes:-4]  # Trim color codes
+
+        try:
+            if (color == args.client_color and args.intercept_client) \
+                    or (color == args.server_color and args.intercept_server):
+                with tempfile.NamedTemporaryFile(mode="w+") as tmpfile:
+                    tmpfile.write(raw_message)
+                    tmpfile.flush()
+                    time.sleep(args.edit_delay)
+                    os.system(args.editor + " " + tmpfile.name)
+                    tmpfile.seek(0)
+                    raw_message = tmpfile.read()
+        except:
+            print("\033[38;5;" + str(args.error_color) + "m"
+                  + "Error reading message from disk. Passing back the original."
+                  + "\033[0m",
+                  file=sys.stderr)
+        finally:
+            postprocessing_queues[connection_id].put(raw_message)
 
 def forward(receive_sock, send_sock, preprocessing_q, postprocessing_q, connection_id, color_code):
     """
-    Handles one direction of communication in a connection. Handles the guts of sockets
-    programming, so _probably_ doesn't need to be changed often. For handling messages,
-    see the process_messages function.
+    Handles one direction of communication in a connection. For processing messages
+    in order, see the process_messages() function.
     """
     readable, writable, exception = select.select(
         [receive_sock],             # rlist
@@ -114,21 +127,31 @@ def forward(receive_sock, send_sock, preprocessing_q, postprocessing_q, connecti
         60                          # timeout
     )
     if len(exception) > 0:
-        print("Exception in socket(s): " + str(exception),
-              file=sys.stderr)
+        errstring = "\033[38;5;" + str(args.error_color) + "m"\
+              + "Exception in socket(s): " + str(exception) \
+              + "\033[0m"
+        preprocessing_q.put(("Err", errstring))
         return True  # Something bad happened, close the sockets.
 
     if receive_sock in readable and send_sock in writable:
-        data_string = receive_sock.recv(4096)
-        if len(data_string) == 0:
+        data_bytes = receive_sock.recv(4096)
+        if len(data_bytes) == 0:
             return True  # Signifies connection is closed on the remote end.
-        data_string = "\033[38;5;" + str(color_code) + "m" + str(data_string)  # Add color
+        data_string = "\033[38;5;" + str(color_code) + "m" + str(data_bytes)  # Colorize
         data_string += "\033[0m" # Terminate color
         preprocessing_q.put((connection_id, data_string))
         data_string = postprocessing_q.get()  # Blocks until processed message available
+        try:
+            data_bytes = ast.literal_eval(data_string)  # Convert from string to bytes
+        except:
+            errstring = "\033[38;5;" + str(args.error_color) + "m" \
+                  + "Error parsing processed message. Sending the original." \
+                  + traceback.format_exc() \
+                  + "\033[0m"
+            preprocessing_q.put(("Err", errstring))
         sent = 0
-        while sent < len(data_string):
-            sent += send_sock.send(data_string[sent:])
+        while sent < len(data_bytes):
+            sent += send_sock.send(data_bytes[sent:])
         return False  # Keep connection alive.
     else:
         return False  # Not in a state to read+write, wait till we are.
