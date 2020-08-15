@@ -45,7 +45,7 @@ arg_parser.add_argument(
     help="8-bit color code for server-sent text."
 )
 arg_parser.add_argument(
-    "--error_color", type=int, default=31,
+    "--error_color", type=int, default=9,
     help="8-bit color code for error messages from alsanna."
 )
 arg_parser.add_argument(
@@ -83,9 +83,15 @@ def process_messages(preprocessing_q):
             print(message, file=sys.stderr)
             continue
         if connection_id == "Kill":
-            while not postprocessing_queues[message].empty():
-                postprocessing_queues[message].get()  # Discard bytes still in queue
-            del postprocessing_queues[message]
+            # If a subprocess shuts down because it detects a connection closed, it may
+            # garbage-collect its queue. We try to clear it out if necessary, but do
+            # nothing if the queue is gone.
+            try:
+                while not postprocessing_queues[message].empty():
+                    postprocessing_queues[message].get()  # Discard bytes still in queue
+                del postprocessing_queues[message]
+            except BrokenPipeError:
+                pass
             continue
         if connection_id not in postprocessing_queues.keys():  # Register new queue
             postprocessing_queues[connection_id] = message  # "message# is Queue object
