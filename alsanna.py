@@ -61,7 +61,7 @@ arg_parser.add_argument(
     help="Whether to intercept client-sent data for editing."
 )
 arg_parser.add_argument(
-    "--intercept_server", action="store_false",  # Will be True unless supplied on CLI
+    "--intercept_server", action="store_true",  # Will be False unless supplied on CLI
     help="Whether to intercept server-sent data for editing."
 )
 arg_parser.add_argument(
