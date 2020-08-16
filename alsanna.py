@@ -1,11 +1,11 @@
 import argparse                                 # Args
 import socket, select, ssl                      # Networking
-import multiprocessing, subprocess, signal      # Multiprocessing and signals
+import multiprocessing, subprocess              # Multiprocessing and signals
 import traceback, sys, os, tempfile, ast, time  # Misc
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument(
-    "--use_tls", type=bool, default=True,
+    "--skip_tls", action="store_true",  # Will be False unless specified on CLI
     help="Whether or not to use TLS at all."
 )
 arg_parser.add_argument(
@@ -57,11 +57,11 @@ arg_parser.add_argument(
     help="Command to use for launching editor."
 )
 arg_parser.add_argument(
-    "--intercept_client", type=bool, default=True,
+    "--pass_client", action="store_true",  # Will be False unless supplied on CLI
     help="Whether to intercept client-sent data for editing."
 )
 arg_parser.add_argument(
-    "--intercept_server", type=bool, default=False,
+    "--intercept_server", action="store_false",  # Will be True unless supplied on CLI
     help="Whether to intercept server-sent data for editing."
 )
 arg_parser.add_argument(
@@ -121,7 +121,7 @@ def process_messages(preprocessing_q):
 
         # Open the message in an editor if required
         try:
-            if (connection_id[-1] == "c" and args.intercept_client) \
+            if (connection_id[-1] == "c" and not args.pass_client) \
                     or (connection_id[-1] == "s" and args.intercept_server):
                 with tempfile.NamedTemporaryFile(mode="w+") as tmpfile:
                     tmpfile.write(message)
@@ -181,7 +181,7 @@ def forward(receive_sock, send_sock, processing_q, result_q, connection_id):
                 try:
                     return_sock = True
                     send_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-                    if args.use_tls:
+                    if not args.skip_tls:
                         f_tls_context = ssl.create_default_context()
                         f_tls_context.check_hostname = False
                         send_sock = f_tls_context.wrap_socket(send_sock)
@@ -232,6 +232,7 @@ def manage_connections(listen_sock, processing_q, connection_id):
     # Initialize queues and set up TLS on listener if need be #
     ###########################################################
 
+    print(args.skip_tls)
     q_manager = multiprocessing.Manager()
     c_result_q = q_manager.Queue()
     processing_q.put((str(connection_id) + "c", c_result_q))
@@ -240,7 +241,7 @@ def manage_connections(listen_sock, processing_q, connection_id):
 
     with listen_sock:
         forward_sock = None
-        if args.use_tls:
+        if not args.skip_tls:
             try:
                 l_tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                 l_tls_context.load_cert_chain(args.cert, args.priv_key)
@@ -269,7 +270,8 @@ def manage_connections(listen_sock, processing_q, connection_id):
                         client_done = forward(listen_sock, forward_sock,
                                               processing_q, c_result_q,
                                               str(connection_id) + "c")
-                        if isinstance(client_done, ssl.SSLSocket):
+                        if isinstance(client_done, ssl.SSLSocket) \
+                                or isinstance(client_done, socket.socket):
                             forward_sock = client_done
                             client_done = False
                     except:
@@ -306,6 +308,8 @@ def main():
     connections = {}
 
     l_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    # Allow socket to be reused quickly after quitting.
+    l_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     l_sock.bind((args.listen_ip, args.listen_port))
     l_sock.listen(args.max_connections)
     with l_sock:
@@ -320,10 +324,8 @@ def main():
                           connection_id))
                 connections[connection_id].start()
                 connection_id += 1
-            except KeyboardInterrupt:
-                break
             except:
-                processing_q.put(("Err", "Something terrible happened. Exiting.\n"
+                processing_q.put(("Err", "Parent process dying, exiting alsanna.\n"
                                          + traceback.format_exc()))
                 break
 
