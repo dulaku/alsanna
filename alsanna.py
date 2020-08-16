@@ -232,7 +232,6 @@ def manage_connections(listen_sock, processing_q, connection_id):
     # Initialize queues and set up TLS on listener if need be #
     ###########################################################
 
-    print(args.skip_tls)
     q_manager = multiprocessing.Manager()
     c_result_q = q_manager.Queue()
     processing_q.put((str(connection_id) + "c", c_result_q))
