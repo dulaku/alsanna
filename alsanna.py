@@ -3,17 +3,33 @@ import socket, select, ssl                      # Networking
 import multiprocessing, subprocess              # Multiprocessing and signals
 import traceback, sys, os, tempfile, ast, time  # Misc
 
+import util_tls                                 # Utilities
+
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument(
     "--skip_tls", action="store_true",  # Will be False unless specified on CLI
     help="Whether or not to use TLS at all."
 )
 arg_parser.add_argument(
-    "--cert", type=str, default="./tls_cert.pem",
+    "--static_servername", action="store_true",  # Will be False unles specified on CLI
+    help="Determines whether to use a static hostname in the server certificate. If true, "
+         "--server_cert and --server_key are used as-is in negotiating TLS connections. If "
+         "false, alsanna will inspect the TLS handshake and generate a leaf certificate "
+         "signed by --server_cert, attempting to match the hostname requested by the "
+         "client. If the client does not use the SNI TLS extension to specify a hostname, "
+         "--servername will be used instead."
+)
+arg_parser.add_argument(
+    "--servername", type=str, default="example.com",
+    help="Default server name to use when dynamically generating leaf certificates and "
+         "the client does not use SNI to indicate the server name it expects."
+)
+arg_parser.add_argument(
+    "--serv_cert", type=str, default="./tls_cert.pem",
     help="Path to a TLS certificate trusted by the software that produces your traffic."
 )
 arg_parser.add_argument(
-    "--priv_key", type=str, default="./tls_key.pem",
+    "--serv_priv_key", type=str, default="./tls_key.pem",
     help="Path to the private key associated with the TLS certificate."
 )
 arg_parser.add_argument(
@@ -168,7 +184,10 @@ def forward(receive_sock, send_sock, processing_q, result_q, connection_id):
         return True  # Something bad happened, close the sockets.
 
     if receive_sock in readable and (send_sock in writable or send_sock is None):
-        data_bytes = receive_sock.recv(args.read_size)
+        try:
+            data_bytes = receive_sock.recv(args.read_size)
+        except ssl.SSLWantReadError:  # Raw socket data but incomplete SSL frame
+            return False  # No problem, just no data yet...
         if len(data_bytes) == 0:  # Signifies connection is closed on the remote end.
             return True
         data_string = str(data_bytes)
@@ -201,7 +220,10 @@ def forward(receive_sock, send_sock, processing_q, result_q, connection_id):
             try:
                 sent = 0
                 while sent < len(data_bytes):
-                    sent += send_sock.send(data_bytes[sent:])
+                    try:
+                        sent += send_sock.send(data_bytes[sent:])
+                    except ssl.SSLWantWriteError:
+                        continue  # No real problem, SSL socket just not ready
             except:
                 processing_q.put(("Err", "Error forwarding message to destination.\n"
                                          + traceback.format_exc()))
@@ -243,7 +265,14 @@ def manage_connections(listen_sock, processing_q, connection_id):
         if not args.skip_tls:
             try:
                 l_tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                l_tls_context.load_cert_chain(args.cert, args.priv_key)
+                if args.static_servername:
+                    l_tls_context.load_cert_chain(args.serv_cert, args.serv_priv_key)
+                else:
+                    l_tls_context.set_servername_callback(
+                        util_tls.leaf_sign(args.serv_cert,
+                                           args.serv_priv_key,
+                                           args.servername)
+                    )
                 listen_sock = l_tls_context.wrap_socket(listen_sock,
                                                         server_side=True)
                 listen_sock.setblocking(False)
