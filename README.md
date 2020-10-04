@@ -2,7 +2,7 @@
 ``alsanna`` is a CLI-based intercepting proxy for TCP connections written in Python with few third-party dependencies. This project aims to meet slightly different needs than some existing solutions like [tcpprox](https://github.com/nccgroup/tcpprox). ``alsanna`` lets you monitor TCP connections and modify the TCP stream travelling in either direction before it reaches its destination.
 
 Like its namesake, it is:
-* Small, coming in at just over 300 lines of code that can be easily hacked to support whatever quirks your protocol has to
+* Small, coming in at just a few hundred lines of code that can be hacked to support whatever you need your protocol to do
 * Composed primarily of dark arts, in this case sockets programming and multiprocessing
 * An intermediary between you and the Old Chaos that is the Internet
 
@@ -17,6 +17,8 @@ Like its namesake, it is:
 The editor chosen by default is ``nano``, but you should choose one available on your system. I highly recommend using soft line wrapping for readability (``Esc``, ``$``). Avoid hard line wrapping (``Esc``, ``L``), which inserts newlines and will corrupt your data. If your modified file is corrupted or otherwise can't be read properly, the unmodified message will be sent. I have noticed graphical editors such as ``pluma`` and ``gedit`` do not work - ``alsanna`` will read back the unmodified contents of the file, and I have no earthly idea why.
 
 The default configuration expects a certificate and private key, both in ``.pem`` format, at ``./tls_cert.pem`` and ``./tls_key.pem`` respectively. An easy way to get these is to run ``openssl req -nodes -new -x509 -keyout tls_key.pem -out tls_cert.pem`` in ``alsanna``'s directory. Getting your software to trust this certificate as a CA or TLS certificate is left as an exercise to the reader, but a good first stop would be installing them in your OS trust store.
+
+``util_tls.py`` shouldn't need much hacking, but if you need to add information to your certificate to get your software to trust it, that'd be the place to do it.
 
 Some screenshots:
 
