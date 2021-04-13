@@ -12,7 +12,7 @@ def leaf_sign(ca_cert, ca_key, default_hostname):
     if not os.path.isdir(cert_dir):
         os.mkdir(cert_dir)
 
-    key_size = 1024
+    key_size = 2048
     days_valid = 90  # Delete your certs every 90 days
 
     openssl_template = (
