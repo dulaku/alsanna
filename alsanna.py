@@ -201,7 +201,7 @@ def forward(receive_sock, send_sock, processing_q, result_q, connection_id):
                     return_sock = True
                     send_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
                     if not args.skip_tls:
-                        f_tls_context = ssl.create_default_context()
+                        f_tls_context = ssl._create_unverified_context()
                         f_tls_context.check_hostname = False
                         send_sock = f_tls_context.wrap_socket(send_sock)
                     send_sock.connect((args.server_ip, args.server_port))
