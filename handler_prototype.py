@@ -48,9 +48,10 @@ class Handler:
         This is called before any bytes are received over listen_sock.
     
         listen_sock is some type of socket. It is guaranteed to have a send(), 
-        recv(), and close() method, but none of a socket's other methods. This is
-        whatever type of socket your protocol uses for transport, so it may be a
-        plain TCP socket, a TLS-wrapped sslsocket, and so on.
+        recv(), connect(), and close() method, might or might not have any of 
+        a socket's other methods. This is whatever type of socket your protocol 
+        uses for transport, so it may be a plain TCP socket, a TLS-wrapped 
+        sslsocket, and so on.
     
         cnxn_locals is a dictionary containing any information that needs to be
         communicated between different handlers and yours, or with alsanna.
