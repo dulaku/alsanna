@@ -1,44 +1,34 @@
-import argparse                                 # Args
-import socket, select, ssl                      # Networking
-import multiprocessing, subprocess              # Multiprocessing and signals
-import traceback, sys, os, tempfile, ast, time  # Misc
+import argparse                               # Args
+import socket, ssl                            # Networking
+import multiprocessing, threading, signal     # Concurrency
+import traceback, sys, os, time, importlib    # Misc
 
-import util_tls                                 # Utilities
-
-arg_parser = argparse.ArgumentParser()
+arg_parser = argparse.ArgumentParser(allow_abbrev=False, add_help=False) # Options needed for argparser shenanigans later
 arg_parser.add_argument(
-    "--skip_tls", action="store_true",  # Will be False unless specified on CLI
-    help="Whether or not to use TLS at all."
-)
-arg_parser.add_argument(
-    "--static_servername", action="store_true",  # Will be False unles specified on CLI
-    help="Determines whether to use a static hostname in the server certificate. If true, "
-         "--server_cert and --server_key are used as-is in negotiating TLS connections. If "
-         "false, alsanna will inspect the TLS handshake and generate a leaf certificate "
-         "signed by --server_cert, attempting to match the hostname requested by the "
-         "client. If the client does not use the SNI TLS extension to specify a hostname, "
-         "--servername will be used instead."
-)
-arg_parser.add_argument(
-    "--servername", type=str, default="example.com",
-    help="Default server name to use when dynamically generating leaf certificates and "
-         "the client does not use SNI to indicate the server name it expects."
-)
-arg_parser.add_argument(
-    "--serv_cert", type=str, default="./tls_cert.pem",
-    help="Path to a TLS certificate trusted by the software that produces your traffic."
-)
-arg_parser.add_argument(
-    "--serv_priv_key", type=str, default="./tls_key.pem",
-    help="Path to the private key associated with the TLS certificate."
+    "--handlers", type=str, nargs="+", default=["tls", "rawbytes"],
+    help="Protocol and message handlers which should be used. Each may specify "
+         "its own additional arguments. Order matters - handlers should be "
+         "provided in the order in which protocols are encapsulated. For "
+         "instance, the default of 'tls rawbytes' applies the tls handler "
+         "first, then the rawbytes handler to the results. This is what you want "
+         "when you're looking at raw bytes encapsulated in TLS."
 )
 arg_parser.add_argument(
     "--listen_ip", type=str, default="127.0.0.1",
     help="IP address of a local interface to listen on."
 )
 arg_parser.add_argument(
-    "--listen_port", type=int, default=443,
+    "--listen_port", type=int, default=3125,
     help="TCP port to listen for incoming connections on."
+)
+arg_parser.add_argument(
+    "--server_ip", type=str, default="127.0.0.1",
+    help="The IP address of the server where traffic will be forwarded."
+)
+arg_parser.add_argument(
+    "--server_port", type=int, default=3125,
+    help="TCP port on remote server to send traffic to; probably same as "
+         "listen_port."
 )
 arg_parser.add_argument(
     "--max_connections", type=int, default=5,
@@ -49,286 +39,327 @@ arg_parser.add_argument(
     help="Number of bytes read from wire before forwarding."
 )
 arg_parser.add_argument(
-    "--server_ip", type=str, default="127.0.0.1",
-    help="IP address of the server your traffic is ultimately bound for."
+    "--pass_client", action="store_true",
+    help="If this is supplied, then by default alsanna will not intercept client "
+         "traffic for editing."
 )
 arg_parser.add_argument(
-    "--server_port", type=int, default=443,
-    help="TCP port on remote server to send traffic to; probably same as listen_port."
+    "--intercept_server", action="store_true",
+    help="If this is supplied, then by default alsanna will intercept server "
+         "traffic for editing."
+)
+arg_parser.add_argument(
+    "--intercept_client_keypress", type=str, default='c',
+    help="The key which, when pressed, toggles interception of client traffic "
+         "for editing. Case sensitive."
+)
+arg_parser.add_argument(
+    "--intercept_server_keypress", type=str, default='s',
+    help="The key which, when pressed, toggles interception of server traffic "
+         "for editing. Case sensitive."
+)
+arg_parser.add_argument(
+    "--editor", type=str, default="nano",
+    help="Command to use for launching editor. Trivial command injection."
 )
 arg_parser.add_argument(
     "--client_color", type=int, default=13,
-    help="8-bit color code for client-sent text."
+    help="8-bit color code for client-sent messages."
 )
 arg_parser.add_argument(
     "--server_color", type=int, default=14,
-    help="8-bit color code for server-sent text."
+    help="8-bit color code for server-sent messages."
 )
 arg_parser.add_argument(
     "--error_color", type=int, default=9,
     help="8-bit color code for error messages from alsanna."
 )
 arg_parser.add_argument(
-    "--editor", type=str, default="nano",
-    help="Command to use for launching editor."
-)
-arg_parser.add_argument(
-    "--pass_client", action="store_true",  # Will be False unless supplied on CLI
-    help="Whether to intercept client-sent data for editing."
-)
-arg_parser.add_argument(
-    "--intercept_server", action="store_true",  # Will be False unless supplied on CLI
-    help="Whether to intercept server-sent data for editing."
-)
-arg_parser.add_argument(
-    "--edit_delay", type=int, default=1,
-    help="Number of seconds to wait before sending edited messages."
+    "--notification_color", type=int, default=11,
+    help="8-bit color code for non-error notifications from alsanna."
 )
 
-args = arg_parser.parse_args()
+# Build argument list dynamically so you only see help for options that matter.
+args, remaining_args = arg_parser.parse_known_args()
+for i in range(len(args.handlers)):
+    final = True if i == len(args.handlers)-1 else False  # Is this the last one?
+    handler_module = importlib.import_module("handler_"+args.handlers[i])
+    args.handlers[i] = handler_module.Handler(arg_parser, remaining_args, final)
+    arg_parser = args.handlers[i].arg_parser
+    remaining_args = args.handlers[i].remaining_args
+args = args.handlers[-1].args # The final handler finished building the real arg_parser
 
-# A dumb hack to get Python to ignore TLS certs
-ssl._create_default_https_context = ssl._create_unverified_context
-
-def format_error(error_message):
-    return "\033[38;5;" + str(args.error_color) + "m" + error_message + "\033[0m"
-
-def process_messages(preprocessing_q):
+def user_interface(display_q):
     """
-    Perform synchronous message processing steps, one message at a time. Lets us reason
-    about our messages in order without giving up the ability to handle multiple
-    connections.
+    Define the process that runs the user interface. This process will:
+        * Monitor for keystrokes that signal a change to alsanna's behavior
+        * Print messages and, if needed, open an editor for tampering with them
+        * Return messages back to their originating connections
+        * Print status information such as error messages
+    Putting all this in a single process eliminates the worst concurrency
+    headaches we might otherwise run into.
+
+    display_q is the queue which all other processes will use to communicate
+    with this process.
     """
-    postprocessing_queues = {}
+    import ui_utils
+    ui_utils.error_color = args.error_color
+    ui_utils.notification_color = args.notification_color
+
+    # This is here so you know about it. SIGINT (so ctrl+c) and SIGTERM will,
+    # instead of their normal behavior, repair the terminal and then kill 
+    # alsanna (with SIGKILL, so with no further cleanup.
+    signal.signal(signal.SIGINT, ui_utils.abort)
+    signal.signal(signal.SIGTERM, ui_utils.abort)
+
+    # This is also here so you know about it. There is a separate thread running
+    # that checks for keystrokes and updates the intercept dict as needed.
+    ui_locals = {}
+    ui_locals["intercept"] = {"client": not args.pass_client,
+                              "server": args.intercept_server,
+                              "i_c_key": args.intercept_client_keypress,
+                              "i_s_key": args.intercept_server_keypress,
+                              "lock": threading.Lock()}
+    toggle_catcher = threading.Thread(target=ui_utils.handle_toggles, 
+                                      kwargs={"ui_locals": ui_locals,
+                                              "stdin": ui_utils.stdin, 
+                                              "stdin_lock": ui_utils.stdin_lock},
+                                      daemon=True)
+    ui_utils.enable_toggles()
+    toggle_catcher.start()
+
+    forwarding_queues = {}
     while True:
-        # Die if orphaned
+        # If orphaned, reset terminal and die
         if os.getppid() == 1:
+            ui_utils.disable_toggles()
             return
-
+     
         # Get a message
         try:
-            connection_id, message = preprocessing_q.get()
+            connection_id, message = display_q.get()
         except:
-            print(format_error("Failed to get message\n" + traceback.format_exc()),
+            print(ui_utils.format_error(("Failed to get message", 
+                                         traceback.format_exc())),
                   file=sys.stderr)
             continue
 
         # Act on special messages
         if connection_id == "Err":
-            print(format_error(message), file=sys.stderr)
+            print(ui_utils.format_error(message), file=sys.stderr)
             continue
         if connection_id == "Kill":
-            del postprocessing_queues[message]  # Destroy reference to a now-dead queue.
+            del forwarding_queues[message]  # Destroy reference to dead queue.
             continue
-        if connection_id not in postprocessing_queues.keys():  # Register new queue
-            postprocessing_queues[connection_id] = message  # "message# is Queue object
+        if connection_id not in forwarding_queues.keys():  # Register new queue
+            forwarding_queues[connection_id] = message  # "message" is Queue object
             continue
+        
+        # Colorize text and choose whether to intercept for editing
+        with ui_locals["intercept"]["lock"]:
+            if connection_id[-6:] == "client":
+                intercept = ui_locals["intercept"]["client"]
+                color = args.client_color
+            elif connection_id[-6:] == "server":
+                intercept = ui_locals["intercept"]["server"]
+                color = args.server_color
+            else:  # If this ever happens it's a bug
+                intercept = False
+                color = 8
 
-        # Colorize text
-        if connection_id[-1] == "c":
-            color = args.client_color
-        elif connection_id[-1] == "s":
-            color = args.server_color
-        else:
-            color = 8  # If this ever gets used something's gone wrong.
-
-        colorful = "\033[38;5;" + str(color) + "m" + message + "\033[0m"
-        print(colorful)  # Print received message
-
-        # Open the message in an editor if required
         try:
-            if (connection_id[-1] == "c" and not args.pass_client) \
-                    or (connection_id[-1] == "s" and args.intercept_server):
-                with tempfile.NamedTemporaryFile(mode="w+") as tmpfile:
-                    tmpfile.write(message)
-                    tmpfile.flush()
-                    time.sleep(args.edit_delay)
-                    subprocess.run([args.editor, tmpfile.name])
-                    tmpfile.seek(0)
-                    message = tmpfile.read()
-        except:
-            print(
-                format_error("Error reading message from disk.\n"
-                             + traceback.format_exc()),
-                file=sys.stderr
-            )
+            ui_utils.disable_toggles() # Turn off keystroke toggles for editing
+            try:
+                message = ui_utils.print_and_edit(message=message, 
+                                                  intercept=intercept, 
+                                                  color=color, 
+                                                  editor=args.editor)
+            except:
+                print(
+                    ui_utils.format_error(("Error in printing/editing.", 
+                                           traceback.format_exc())),
+                    file=sys.stderr
+                )
+                break
+            ui_utils.enable_toggles()
 
-        # Send the last-good message version (original if the modification failed)
         finally:
             try:
-                postprocessing_queues[connection_id].put(message)
+                forwarding_queues[connection_id].put(message)
             except:
-                pass  # If a subprocess died and its queue is gone, just continue
+                pass  # If a subprocess died and its queue is gone, continue
 
-def forward(receive_sock, send_sock, processing_q, result_q, connection_id):
+def cleanup(sockets):
     """
-    Handles one direction of communication in a connection. For processing messages
-    in order, see the process_messages() function. This implementation assumes the
-    server is finicky and will close the connection if a message is not promptly sent
-    after connection - to allow you editing time, we therefore wait to open
-    the TCP connection until after editing. Assumes the client is patient.
+    Ensures the sockets for listening and sending are both closed.
     """
-    return_sock = False
-    # If we haven't opened the forwarding connection yet, send_sock is None. So we have
-    # to write our select() call to avoid passing None to it. This never gets called
-    # with receive_sock as None so we don't worry about it.
-    readable, writable, exception = select.select(
-        [receive_sock],                                                          # rlist
-        [send_sock] if send_sock is not None else [],                            # wlist
-        [receive_sock, send_sock] if send_sock is not None else [receive_sock],  # xlist
-        0  # timeout disabled - don't block
-    )
+    try:
+        sockets[listen]["sock"].close()
+    except:
+        pass
+    try:
+        sockets[send]["sock"].close()
+    except:
+        pass
 
-    if len(exception) > 0:
-        processing_q.put(("Err", "Exception in socket(s): " + str(exception)))
-        return True  # Something bad happened, close the sockets.
+def forward(sockets, listen, send, display_q, result_q, cnxn_locals):
+    """
+    Forwards a TCP stream in one direction, from listen to send.
 
-    if receive_sock in readable and (send_sock in writable or send_sock is None):
+    sockets is a dictionary containing sockets and related data structures; see
+    manage_connection()
+
+    listen is the host which will be sending data in this direction, either 
+    "client" or "server". The host alsanna listens to.
+
+    send is the host which will be receiving data in this direction, either
+    "client" or "server". The host alsanna sends to.
+
+    display_q is the global queue the user interface reads from.
+
+    result_q is the queue which this direction of travel reads from when
+    forwarding a message. the user interface process puts messages on this queue.
+
+    cnxn_locals is a dictionary which holds any state that needs to be shared
+    across different handlers or by alsanna itself.
+    """
+    ignored_sock_errors = []
+    for handler in args.handlers:
+        ignored_sock_errors += handler.retry_errors
+    ignored_sock_errors = tuple(ignored_sock_errors)
+    while True:
+        if os.getppid() == 1: # If orphaned, clean up toys and die
+            cleanup(sockets)
+            break
         try:
-            data_bytes = receive_sock.recv(args.read_size)
-        except ssl.SSLWantReadError:  # Raw socket data but incomplete SSL frame
-            return False  # No problem, just no data yet...
-        if len(data_bytes) == 0:  # Signifies connection is closed on the remote end.
-            return True
-        data_string = str(data_bytes)
-
-        processing_q.put((connection_id, data_string))
-        try:
-            data_string = result_q.get()  # Blocks until processed message available
-
-            if send_sock is None:  # We need to open a connection
-                try:
-                    return_sock = True
-                    send_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-                    if not args.skip_tls:
-                        f_tls_context = ssl._create_unverified_context()
-                        f_tls_context.check_hostname = False
-                        send_sock = f_tls_context.wrap_socket(send_sock)
-                    send_sock.connect((args.server_ip, args.server_port))
-                    send_sock.setblocking(False)
-                except:
-                    processing_q.put(("Err", "Error setting up forwarder.\n"
-                                             + traceback.format_exc()))
-                    return True  # Can't send data without this, so give up.
-
             try:
-                data_bytes = ast.literal_eval(data_string)  # Convert from string to bytes
-            except:
-                processing_q.put(("Err", "Error parsing processed message.\n"
-                                         + traceback.format_exc()))
+                data_bytes = sockets[listen]["sock"].recv(args.read_size)
+            except ignored_sock_errors:
+                continue 
+            if len(data_bytes) == 0:
+                break
+
+            readable = args.handlers[-1].bytes_to_message(data_bytes)
+            display_q.put((cnxn_locals['cnxn_id']+listen, readable))
+            readable = result_q.get() # Blocks until message available
+            data_bytes = args.handlers[-1].message_to_bytes(readable)
+
+            # Set up socket to talk to server, typically on first iteration 
+            if listen == "client" and sockets["server"]["sock"] is None:
+                sockets["server"]["sock"] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+                try:
+                    for handler in args.handlers:
+                        sockets["server"]["sock"] = handler.setup_sender(
+                            send_sock=sockets["server"]["sock"],
+                            cnxn_locals=cnxn_locals
+                        )
+                    sockets["server"]["sock"].connect((args.server_ip, 
+                                                       args.server_port))
+                    sockets["server"]["connected"].set()
+                except:
+                    display_q.put(("Err", ("Error setting up listener.",
+                                           traceback.format_exc())
+                                    ))
+                    return
+        except:
+            display_q.put(("Err", ("Error in forwarder.",
+                                   traceback.format_exc())
+                            ))
+            return
         finally:
             try:
                 sent = 0
                 while sent < len(data_bytes):
                     try:
-                        sent += send_sock.send(data_bytes[sent:])
-                    except ssl.SSLWantWriteError:
-                        continue  # No real problem, SSL socket just not ready
+                        sent += sockets[send]["sock"].send(data_bytes[sent:])
+                    except ignored_sock_errors:
+                        continue
             except:
-                processing_q.put(("Err", "Error forwarding message to destination.\n"
-                                         + traceback.format_exc()))
-                send_sock.close()  # Might need to do this here if it failed immediately
-                return True  # Probably want to give up if sending failed somehow.
-    if return_sock:  # Disgusting overloading of return value type
-        return send_sock
-    else:
-        return False  # Keep connection alive.
+                display_q.put(("Err", ("Error sending data.",
+                                        traceback.format_exc())
+                                ))
+                cleanup(sockets)
+                return
 
-
-def manage_connections(listen_sock, processing_q, connection_id):
+def manage_connections(listen_sock, display_q, connection_id):
     """
-    Handle logic required to set up and maintain connections. The ability to hack this
-    is the main selling point of alsanna - for instance if you need to send a plaintext
-    message from the server to the client prior to TLS negotiation, you can do it here.
+    Manage a single TCP connection. Sets up shared resources and a thread for
+    each direction of communication.
 
-    So that we can have all the protocol logic in one place, we handle both directions
-    of traffic here. A more specialized proxy might benefit in modularity from having
-    a child process for each direction and using blocking sockets for each.
+    listen_sock is the "client" socket spun off from our server upon receiving
+    a connection.
 
-    The forward() method handles setting up the socket we use to forward data to the
-    server. This is ugly as heck, but handles the common case where the server kills
-    your connection if you take too long editing something.
+    display_q is the global queue the user interface reads from.
+
+    connection_id is a numeric id incremented for each connection we receive.
     """
 
-    ###########################################################
-    # Initialize queues and set up TLS on listener if need be #
-    ###########################################################
+    # Keep track of anything needed for maintaining state.
+    cnxn_locals = {'cnxn_id': str(connection_id)}
 
     q_manager = multiprocessing.Manager()
     c_result_q = q_manager.Queue()
-    processing_q.put((str(connection_id) + "c", c_result_q))
+    display_q.put((cnxn_locals['cnxn_id'] + "client", c_result_q))
     s_result_q = q_manager.Queue()
-    processing_q.put((str(connection_id) + "s", s_result_q))
+    display_q.put((cnxn_locals['cnxn_id'] + "server", s_result_q))
 
-    with listen_sock:
-        forward_sock = None
-        if not args.skip_tls:
-            try:
-                l_tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                if args.static_servername:
-                    l_tls_context.load_cert_chain(args.serv_cert, args.serv_priv_key)
-                else:
-                    l_tls_context.set_servername_callback(
-                        util_tls.leaf_sign(args.serv_cert,
-                                           args.serv_priv_key,
-                                           args.servername)
-                    )
-                listen_sock = l_tls_context.wrap_socket(listen_sock,
-                                                        server_side=True)
-                listen_sock.setblocking(False)
-            except:
-                processing_q.put(("Err", "Error setting up TLS listener.\n"
-                                         + traceback.format_exc()))
-                return
+    sockets = {"client": {"sock": listen_sock},
+               "server": {"sock": None,
+                          "connected": threading.Event()}}
 
-        ############################################################################
-        # Shuffle bytes back and forth, setting up forwarder on first sent message #
-        ############################################################################
-        client_done, server_done = False, False
+    with sockets["client"]["sock"]:
         try:
-            # We check forward_sock to handle the situation where we never update
-            # server_done because we errored out trying to send from client to server
-            while not client_done and (not server_done or forward_sock is None):
-                # Die if orphaned
-                if os.getppid() == 1:
-                    return
-                # Send try to forward data in each direction
-                if not client_done:
-                    try:
-                        client_done = forward(listen_sock, forward_sock,
-                                              processing_q, c_result_q,
-                                              str(connection_id) + "c")
-                        if isinstance(client_done, ssl.SSLSocket) \
-                                or isinstance(client_done, socket.socket):
-                            forward_sock = client_done
-                            client_done = False
-                    except:
-                        processing_q.put(("Err", "Error forwarding data to server.\n"
-                                          + traceback.format_exc()))
-                        break
-                if not server_done and forward_sock is not None:
-                    try:
-                        server_done = forward(forward_sock, listen_sock,
-                                              processing_q, s_result_q,
-                                              str(connection_id) + "s")
-                    except:
-                        processing_q.put(("Err", "Error forwarding data to client.\n"
-                                          + traceback.format_exc()))
-                        break
-        finally:  # No context manager because it's None sometimes; manual cleanup
-            if forward_sock is not None:
-                forward_sock.close()
+            for handler in args.handlers:
+                sockets["client"]["sock"] = handler.setup_listener(
+                    listen_sock=sockets["client"]["sock"], 
+                    cnxn_locals=cnxn_locals
+                )
+        except:
+            display_q.put(("Err", ("Error setting up listener.",
+                                   traceback.format_exc())
+                            ))
+            return
 
+        c_to_s_thread = threading.Thread(target=forward,
+                                         kwargs={"sockets": sockets,
+                                                 "listen": "client",
+                                                 "send": "server",
+                                                 "display_q": display_q,
+                                                 "result_q": c_result_q,
+                                                 "cnxn_locals": cnxn_locals},
+                                         daemon=True)
+        s_to_c_thread = threading.Thread(target=forward,
+                                         kwargs={"sockets": sockets,
+                                                 "listen": "server",
+                                                 "send": "client",
+                                                 "display_q": display_q,
+                                                 "result_q": s_result_q,
+                                                 "cnxn_locals": cnxn_locals},
+                                         daemon=True)
+
+        try:
+            c_to_s_thread.start()
+            sockets["server"]["connected"].wait() # Wait for connection to server
+            s_to_c_thread.start()                 # Only now begin server->client
+            c_to_s_thread.join()
+            s_to_c_thread.join()
+        except:
+            display_q.put(("Err", ("Forwarder " + cnxn_locals["cnxn_id"] + "dying.",
+                                   traceback.format_exc())
+                            ))
+            display_q.put(("Kill", cnxn_locals['cnxn_id'] + "client"))
+            display_q.put(("Kill", cnxn_locals['cnxn_id'] + "server"))
+        return
 
 def main():
     """
-    Highest-level server logic. Sets up the synchronous message processor, sets up
-    connections, and spins up a subprocess to handle each connection.
+    Highest-level server logic. Sets up the synchronous message processor, sets 
+    up connections, and spins up a subprocess to handle each connection.
     """
-    processing_q = multiprocessing.Queue()
+    display_q = multiprocessing.Queue()
 
-    message_processor = multiprocessing.Process(target=process_messages,
-                                                args=(processing_q,))
+    message_processor = multiprocessing.Process(target=user_interface,
+                                                kwargs={"display_q": display_q})
     message_processor.daemon = True
     message_processor.start()
 
@@ -348,15 +379,16 @@ def main():
                 connections[connection_id] = multiprocessing.Process(
                     target=manage_connections,
                     args=(listen_sock,
-                          processing_q,
+                          display_q,
                           connection_id))
                 connections[connection_id].start()
                 connection_id += 1
             except:
-                processing_q.put(("Err", "Parent process dying, exiting alsanna.\n"
-                                         + traceback.format_exc()))
+                display_q.put(("Err", ("Parent process dying, exiting alsanna.\n",
+                                       traceback.format_exc())
+                                ))
+                time.sleep(1) # Give processor time to print the stack trace.
                 break
-
 
 if __name__ == '__main__':
     main()
