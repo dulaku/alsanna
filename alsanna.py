@@ -87,7 +87,9 @@ for i in range(len(args.handlers)):
     args.handlers[i] = handler_module.Handler(arg_parser, remaining_args, final)
     arg_parser = args.handlers[i].arg_parser
     remaining_args = args.handlers[i].remaining_args
+handlers = args.handlers  # Save the list of modules
 args = args.handlers[-1].args # The final handler finished building the real arg_parser
+args.handlers = handlers  # Replace the list of strings with a list of modules
 
 def user_interface(display_q):
     """

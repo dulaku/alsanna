@@ -43,62 +43,62 @@ class Handler:
         #############################################
 
     def setup_listener(self, listen_sock, cnxn_locals):
-    """
-    Do anything you need to as part of setting up a listener for your protocol.
-    This is called before any bytes are received over listen_sock.
-
-    listen_sock is some type of socket. It is guaranteed to have a send(), 
-    recv(), and close() method, but none of a socket's other methods. This is
-    whatever type of socket your protocol uses for transport, so it may be a
-    plain TCP socket, a TLS-wrapped sslsocket, and so on.
-
-    cnxn_locals is a dictionary containing any information that needs to be
-    communicated between different handlers and yours, or with alsanna.
-
-    This should return the socket which will be used as the transport for the
-    next protocol in the chain (if any) or which contains the data you are
-    studying.
-    """
+        """
+        Do anything you need to as part of setting up a listener for your protocol.
+        This is called before any bytes are received over listen_sock.
+    
+        listen_sock is some type of socket. It is guaranteed to have a send(), 
+        recv(), and close() method, but none of a socket's other methods. This is
+        whatever type of socket your protocol uses for transport, so it may be a
+        plain TCP socket, a TLS-wrapped sslsocket, and so on.
+    
+        cnxn_locals is a dictionary containing any information that needs to be
+        communicated between different handlers and yours, or with alsanna.
+    
+        This should return the socket which will be used as the transport for the
+        next protocol in the chain (if any) or which contains the data you are
+        studying.
+        """
         return HandlerSock(listen_sock)
 
     def setup_sender(self, send_sock, cnxn_locals):
-    """
-    Do anything you need to as part of setting up the connection from alsanna
-    to the remote server for your protocol. This is called before any bytes are
-    sent over send_sock.
+        """
+        Do anything you need to as part of setting up the connection from alsanna
+        to the remote server for your protocol. This is called before any bytes are
+        sent over send_sock.
 
-    send_sock is some type of socket. The same guarantees apply as for
-    listen_sock in setup_listener(), for the same reasons.
+        send_sock is some type of socket. The same guarantees apply as for
+        listen_sock in setup_listener(), for the same reasons.
 
-    cnxn_locals is a dictionary containing any information that needs to be
-    communicated between different handlers and yours, or with alsanna.
+        cnxn_locals is a dictionary containing any information that needs to be
+        communicated between different handlers and yours, or with alsanna.
 
-    This should return the socket which will be used as the transport for the
-    next protocol in the chain (if any) or which contains the data you are
-    studying.
-    """
+        This should return the socket which will be used as the transport for the
+        next protocol in the chain (if any) or which contains the data you are
+        studying.
+        """
         return HandlerSock(send_sock)
 
     def bytes_to_message(self, bytes):
-    """
-    Convert a sequence of bytes into a human-readable format. This will be
-    called only for the last handler in a chain. It is recommended that you use
-    logic in a custom Socket class in order to parse message boundaries, so that
-    bytes is exactly one complete message in your protocol.
+        """
+        Convert a sequence of bytes into a human-readable format. This will be
+        called only for the last handler in a chain. It is recommended that you use
+        logic in a custom Socket class in order to parse message boundaries, so that
+        bytes is exactly one complete message in your protocol.
 
-    bytes is a Python bytes object returned by your protocol's socket's recv()
-    method.
-    """
+        bytes is a Python bytes object returned by your protocol's socket's recv()
+        method.
+        """
         return str(bytes)
 
     def message_to_bytes(self, message):
-    """
-    Convert a human-readable message back into a bytestring to be forwarded to
-    the server. This should invert whatever happened in bytes_to_message(). If
-    this fails, the original bytestring that was supplied to bytes_to_message()
-    will be sent instead. This, too, is called only by the last handler in a
-    chain.
-    """
+        """
+        Convert a human-readable message back into a bytestring to be forwarded to
+        the server. This should invert whatever happened in bytes_to_message(). If
+        this fails, the original bytestring that was supplied to bytes_to_message()
+        will be sent instead. This, too, is called only by the last handler in a
+        chain.
+        """
         return ast.literal_eval(message)
 
 
@@ -111,6 +111,12 @@ class HandlerSock():
         self.sock = sock  # Underlying transport
         self.send_buf = b''  # Store unsent bytes
         self.recv_buf = b''  # Store unread bytes
+
+    def connect(self, target_tuple):
+        self.sock.connect(target_tuple)
+
+    def close():
+        self.sock.close()
 
     def send(self, bytes):
         sent = 0
