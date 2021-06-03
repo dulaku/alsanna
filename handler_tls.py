@@ -88,7 +88,7 @@ class Handler:
         tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls_context.verify_mode = ssl.CERT_NONE
         if self.static_servername:
-            tls_context.load_cert_chain(self.serv_cert, self.serv_priv_key)
+            tls_context.load_cert_chain(self.serv_cert, self.serv_key)
         else:
             tls_context.set_servername_callback(
                 self.leaf_sign  # I literally cannot believe this worked
