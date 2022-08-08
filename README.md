@@ -8,7 +8,7 @@ Like its namesake, it is:
 
 ### Usage
 
-``alsanna``'s core supports Python 3.4 and above, but has no Python dependencies outside the standard library. Handlers can have additional dependencies. 
+``alsanna``'s core supports Python 3.6 and above, but has no Python dependencies outside the standard library. Handlers can have additional dependencies. 
 
 Handlers in ``alsanna`` are modules which are each responsible for managing one, and only one, protocol. Handlers decode data into a form you can edit in a text editor, then try to reassemble that code back into valid messages for your protocol. This design is meant to make encapsulation of protocols relatively straightforward, because you can compose handlers into a chain - data read off the wire is handled, then potentially handed to another handler, and so on. As a developer, you only need to know what types of objects the handler before yours will be supplying and how to reconstruct those objects after editing.
 
