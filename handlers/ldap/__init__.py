@@ -2,7 +2,6 @@ import argparse, ast, threading
 import impacket.ldap.ldapasn1
 from pyasn1.codec import ber as pyasn1_codec_ber
 from pyasn1.codec.native.decoder import decode as pyasn1_codec_native_decode
-from pyasn1.codec.native.encoder import encode as pyasn1_codec_native_encode
 import pyasn1.error
 from impacket.ldap import ldapasn1
 import pyasn1.type.univ
@@ -190,7 +189,6 @@ class Handler:
         """
         Convert an LDAPMessage into a human-readable string.
         """
-        testing = pyasn1_codec_native_encode(ldap_msg)
         unprintable_paths = [] # Keep track of elements that can't be represented in JSON
 
         # Convert everything we _can_ represent in JSON to a string with its type and
@@ -215,10 +213,7 @@ class Handler:
     def printable_to_obj(self, message, unprintable_state):
         """
         Convert a human-readable message back into a bytestring to be forwarded to
-        the server. This should invert whatever happened in bytes_to_message(). If
-        this fails, the original bytestring that was supplied to bytes_to_message()
-        will be sent instead. This, too, is called only by the last handler in a
-        chain.
+        the server.
         """
         json_msg = edit_utils.editable_to_raw_mangle(message)
         msg = json.loads('\n'.join(json_msg), object_hook=decode_ldap_structure)
