@@ -10,6 +10,7 @@ import json
 import collections
 
 from .. import tls
+import ssl
 
 def build_ldap_encoder(unprintable_storage):
     """
@@ -232,7 +233,6 @@ class Handler:
         ldap_msg = pyasn1_codec_native_decode(msg, asn1Spec=ldapasn1.LDAPMessage())
         return ldap_msg
 
-import ssl
 class LDAPSocket():
     """
     Socket that recvs bytes and returns an LDAPMessage, and accepts LDAPMessages to
