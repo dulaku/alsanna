@@ -12,17 +12,7 @@
 import argparse, ast
 
 class Handler:
-    def __init__(self, arg_parser, remaining_args, final):
-
-        # It's common to have a situation where your underlying transport has
-        # some data but not enough to actually construct a valid message for
-        # whatever is next in the pipeline. For instance, a TLS socket can have
-        # recv()'d data on the underlying TCP socket, but it might not be enough
-        # to construct any plaintext bytes. This list should contain exceptions
-        # that are raised in these situations by send() or recv(), which just
-        # indicate that we need to keep retrying until we get something.
-        self.retry_errors = [PrototypeWantWriteError]
-
+    def __init__(self, arg_parser, final):
         # Each handler builds its own arg_parser that inherits from the handlers
         # before it, and from alsanna's global arg_parser. The upside is it's
         # easy to get help for just the handlers you're using, the downside is
@@ -33,54 +23,55 @@ class Handler:
         self.arg_parser = argparse.ArgumentParser(parents=[arg_parser], 
                                                   add_help=final,
                                                   allow_abbrev=False)
+
         ##########################################
         # Any handler-specific arguments go here.#
         ##########################################
+
         self.args, self.remaining_args = self.arg_parser.parse_known_args()
 
         #############################################
         # Anything else you do on startup goes here.#
         #############################################
 
-    def setup_listener(self, listen_sock, cnxn_locals):
+    def setup_client_facing(self, listen_sock, cnxn_locals):
         """
-        Do anything you need to as part of setting up a listener for your protocol.
+        Do anything you need to as part of setting up the client-facing socket.
         This is called before any bytes are received over listen_sock.
     
         listen_sock is some type of socket. It is guaranteed to have a send(), 
         recv(), connect(), and close() method, might or might not have any of 
-        a socket's other methods. This is whatever type of socket your protocol 
-        uses for transport, so it may be a plain TCP socket, a TLS-wrapped 
-        sslsocket, and so on.
+        a socket's other methods. This is a standard Python socket if this is the first
+        handler, or the socket created by the previous handler otherwise.
     
         cnxn_locals is a dictionary containing any information that needs to be
         communicated between different handlers and yours, or with alsanna.
     
-        This should return the socket which will be used as the transport for the
-        next protocol in the chain (if any) or which contains the data you are
-        studying.
+        This should return a socket that speaks your protocol (recv() returns objects
+        representing messages, and send() turns those objects into whatever the
+        underlying socket understands).
         """
         return HandlerSock(listen_sock)
 
-    def setup_sender(self, send_sock, cnxn_locals):
+    def setup_server_facing(self, send_sock, cnxn_locals):
         """
         Do anything you need to as part of setting up the connection from alsanna
         to the remote server for your protocol. This is called before any bytes are
         sent over send_sock.
 
-        send_sock is some type of socket. The same guarantees apply as for
-        listen_sock in setup_listener(), for the same reasons.
+        send_sock is some type of socket, just as for listen_sock in
+        setup_client_facing().
 
         cnxn_locals is a dictionary containing any information that needs to be
         communicated between different handlers and yours, or with alsanna.
 
-        This should return the socket which will be used as the transport for the
-        next protocol in the chain (if any) or which contains the data you are
-        studying.
+        This should return a socket that speaks your protocol (recv() returns objects
+        representing messages, and send() turns those objects into whatever the
+        underlying socket understands).
         """
         return HandlerSock(send_sock)
 
-    def bytes_to_message(self, bytes):
+    def obj_to_printable(self, py_obj):
         """
         Convert a sequence of bytes into a human-readable format. This will be
         called only for the last handler in a chain. It is recommended that you use
@@ -90,9 +81,9 @@ class Handler:
         bytes is a Python bytes object returned by your protocol's socket's recv()
         method.
         """
-        return str(bytes)
+        return str(py_obj)
 
-    def message_to_bytes(self, message):
+    def printable_to_obj(self, message):
         """
         Convert a human-readable message back into a bytestring to be forwarded to
         the server. This should invert whatever happened in bytes_to_message(). If
@@ -116,20 +107,20 @@ class HandlerSock():
     def connect(self, target_tuple):
         self.sock.connect(target_tuple)
 
-    def close():
+    def close(self):
         self.sock.close()
 
     def send(self, bytes):
         sent = 0
         self.send_buf += bytes
-        if len(self.send_buf) < 64:  # Not enough data to proceed, retry
-            raise PrototypeWantWriteError
         while len(self.send_buf) >= 64:  # Send everything we can
             self.sock.send(self.send_buf[:64])
             self.send_buf = self.send_buf[64:]
             sent += 64
-        return sent + len(self.send_buf) # Number of bytes consumed from input
 
+    # Your socket should accept a num_bytes in its recv(), but can ignore it if it
+    # doesn't make sense, for instance if you don't read from a socket that recv()s
+    # bytestrings.
     def recv(self, num_bytes):
         while len(self.recv_buf) < 64: # Read until we get enough to work with
             self.recv_buf += self.sock.recv(num_bytes)
@@ -137,6 +128,7 @@ class HandlerSock():
         self.recv_buf = self.recv_buf[64:]
         return recvd
 
-# It's recommended to create your own error classes to make debugging easier
-class PrototypeWantWriteError(Exception):
+# Make your own exceptions for errors in your protocol that you know how to identify,
+# it will make your life easier debugging. We don't actually use this one though.
+class PrototypeMysteryError(Exception):
     pass

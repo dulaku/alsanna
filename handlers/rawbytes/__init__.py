@@ -5,7 +5,7 @@ import argparse, ast
 # between bytes and strings.
 
 class Handler:
-    def __init__(self, arg_parser, remaining_args, final):
+    def __init__(self, arg_parser, final):
         self.retry_errors = []
         self.arg_parser = argparse.ArgumentParser(parents=[arg_parser], 
                                                   add_help=final,
