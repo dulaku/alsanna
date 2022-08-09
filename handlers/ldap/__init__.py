@@ -265,9 +265,9 @@ class LDAPSocket():
         if 'protocolOp' in ldap_msg \
            and 'extendedResp' in ldap_msg['protocolOp'] \
            and 'resultCode' in ldap_msg['protocolOp']['extendedResp'] \
-           and 'responseName' in ldap_msg['protocolOp']['extendedResp']:
+           and 'responseName' in ldap_msg['protocolOp']['extendedResp'] \
+           and str(ldap_msg['protocolOp']['extendedResp']['responseName']) == '1.3.6.1.4.1.1466.20037' \:
             if str(ldap_msg['protocolOp']['extendedResp']['resultCode']) == 'success' \
-               and str(ldap_msg['protocolOp']['extendedResp']['responseName']) == '1.3.6.1.4.1.1466.20037' \
                and not isinstance(self.sock, tls.TLSSock):
                 with self.send_lock:
                     self.sock = self.tls_handler.setup_client_facing(self.sock, cnxn_locals={})
