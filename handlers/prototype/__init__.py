@@ -73,17 +73,16 @@ class Handler:
 
     def obj_to_printable(self, py_obj):
         """
-        Convert a sequence of bytes into a human-readable format. This will be
+        Convert a Python object into a human-readable format. This will be
         called only for the last handler in a chain. It is recommended that you use
         logic in a custom Socket class in order to parse message boundaries, so that
         bytes is exactly one complete message in your protocol.
 
-        bytes is a Python bytes object returned by your protocol's socket's recv()
-        method.
+        py_obj is the object returned by your protocol's socket's recv() method.
         """
-        return str(py_obj)
+        return str(py_obj), None # Return no unprintable features of the message
 
-    def printable_to_obj(self, message):
+    def printable_to_obj(self, message, unprintable_state):
         """
         Convert a human-readable message back into a bytestring to be forwarded to
         the server. This should invert whatever happened in bytes_to_message(). If
@@ -127,8 +126,3 @@ class HandlerSock():
         recvd = self.recv_buf[:64]
         self.recv_buf = self.recv_buf[64:]
         return recvd
-
-# Make your own exceptions for errors in your protocol that you know how to identify,
-# it will make your life easier debugging. We don't actually use this one though.
-class PrototypeMysteryError(Exception):
-    pass
